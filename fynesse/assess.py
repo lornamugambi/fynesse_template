@@ -1,113 +1,103 @@
-from typing import Any, Union
+from typing import List, Tuple, Optional
 import pandas as pd
-import logging
-
-from .config import *
-from . import access
-
-# Set up logging
-logger = logging.getLogger(__name__)
-
-"""These are the types of import we might expect in this file
-import pandas
-import bokeh
-import seaborn
 import matplotlib.pyplot as plt
-import sklearn.decomposition as decomposition
-import sklearn.feature_extraction"""
+import osmnx as ox
 
-"""Place commands in this file to assess the data you have downloaded.
-How are missing values encoded, how are outliers encoded? What do columns represent,
-makes rure they are correctly labeled. How is the data indexed. Crete visualisation
-routines to assess the data (e.g. in bokeh). Ensure that date formats are correct
-and correctly timezoned."""
+def _bbox_from_latlon(latitude: float, longitude: float, box_size_km: float):
+    box_size_degrees = box_size_km / 111.0
+    north = latitude + box_size_degrees / 2
+    south = latitude - box_size_degrees / 2
+    west = longitude - box_size_degrees / 2
+    east = longitude + box_size_degrees / 2
+    return (west, south, east, north)
 
+def plot_city_map(place_name: str, latitude: float, longitude: float, box_size_km: float = 2, poi_tags=None):
+    if poi_tags is None:
+        poi_tags = {"amenity": True}
+    bbox = _bbox_from_latlon(latitude, longitude, box_size_km)
+    graph = ox.graph_from_bbox(bbox)
+    area = ox.geocode_to_gdf(place_name)
+    nodes, edges = ox.graph_to_gdfs(graph)
+    buildings = ox.features_from_bbox(bbox, tags={"building": True})
+    pois = ox.features_from_bbox(bbox, tags=poi_tags)
 
-def data() -> Union[pd.DataFrame, Any]:
-    """
-    Load the data from access and ensure missing values are correctly encoded as well as
-    indices correct, column names informative, date and times correctly formatted.
-    Return a structured data structure such as a data frame.
+    fig, ax = plt.subplots(figsize=(6, 6))
+    area.plot(ax=ax, color="tan", alpha=0.5)
+    buildings.plot(ax=ax, facecolor="gray", edgecolor="gray")
+    edges.plot(ax=ax, linewidth=1, edgecolor="black", alpha=0.3)
+    nodes.plot(ax=ax, color="black", markersize=1, alpha=0.3)
+    pois.plot(ax=ax, color="green", markersize=5, alpha=1)
+    west, south, east, north = bbox
+    ax.set_xlim(west, east)
+    ax.set_ylim(south, north)
+    ax.set_title(place_name, fontsize=14)
+    plt.show()
 
-    IMPLEMENTATION GUIDE FOR STUDENTS:
-    ==================================
+def get_osm_features(latitude: float, longitude: float, box_size_km: float = 2, tags=None) -> pd.DataFrame:
+    if tags is None:
+        tags = {"amenity": True}
+    bbox = _bbox_from_latlon(latitude, longitude, box_size_km)
+    gdf = ox.features_from_bbox(bbox, tags)
+    return pd.DataFrame(gdf)
 
-    1. REPLACE THIS FUNCTION WITH YOUR DATA ASSESSMENT CODE:
-       - Load data using the access module
-       - Check for missing values and handle them appropriately
-       - Validate data types and formats
-       - Clean and prepare data for analysis
-
-    2. ADD ERROR HANDLING:
-       - Handle cases where access.data() returns None
-       - Check for data quality issues
-       - Validate data structure and content
-
-    3. ADD BASIC LOGGING:
-       - Log data quality issues found
-       - Log cleaning operations performed
-       - Log final data summary
-
-    4. EXAMPLE IMPLEMENTATION:
-       df = access.data()
-       if df is None:
-           print("Error: No data available from access module")
-           return None
-
-       print(f"Assessing data quality for {len(df)} rows...")
-       # Your data assessment code here
-       return df
-    """
-    logger.info("Starting data assessment")
-
-    # Load data from access module
-    df = access.data()
-
-    # Check if data was loaded successfully
-    if df is None:
-        logger.error("No data available from access module")
-        print("Error: Could not load data from access module")
-        return None
-
-    logger.info(f"Assessing data quality for {len(df)} rows, {len(df.columns)} columns")
-
+def get_feature_vector(latitude: float, longitude: float, box_size_km: float = 2, features: Optional[List[Tuple[str, Optional[str]]]] = None):
+    if features is None:
+        features = [
+            ("amenity", None),
+            ("amenity", "school"),
+            ("amenity", "hospital"),
+            ("amenity", "restaurant"),
+            ("amenity", "cafe"),
+            ("shop", None),
+            ("tourism", None),
+            ("tourism", "hotel"),
+            ("tourism", "museum"),
+            ("leisure", None),
+            ("leisure", "park"),
+            ("historic", None),
+            ("amenity", "place_of_worship"),
+        ]
+    bbox = _bbox_from_latlon(latitude, longitude, box_size_km)
+    tags = {}
+    for key, _ in features:
+        if key not in tags:
+            tags[key] = True
     try:
-        # STUDENT IMPLEMENTATION: Add your data assessment code here
+        pois = ox.features_from_bbox(bbox, tags)
+        if len(pois) > 0:
+            df = pd.DataFrame(pois)
+        else:
+            df = pd.DataFrame(columns=[key for key, _ in features])
+    except Exception:
+        return {f"{key}:{value}" if value else key: 0 for key, value in features}
 
-        # Example: Check for missing values
-        missing_counts = df.isnull().sum()
-        if missing_counts.sum() > 0:
-            logger.info(f"Found missing values: {missing_counts.to_dict()}")
-            print(f"Missing values found: {missing_counts.sum()} total")
+    counts = {}
+    for key, value in features:
+        if key in df.columns:
+            if value:
+                counts[f"{key}:{value}"] = (df[key] == value).sum()
+            else:
+                counts[key] = df[key].notnull().sum()
+        else:
+            counts[f"{key}:{value}" if value else key] = 0
+    return counts
 
-        # Example: Check data types
-        logger.info(f"Data types: {df.dtypes.to_dict()}")
-
-        # Example: Basic data cleaning (students should customize this)
-        # Remove completely empty rows
-        df_cleaned = df.dropna(how="all")
-        if len(df_cleaned) < len(df):
-            logger.info(f"Removed {len(df) - len(df_cleaned)} completely empty rows")
-
-        logger.info(f"Data assessment completed. Final shape: {df_cleaned.shape}")
-        return df_cleaned
-
-    except Exception as e:
-        logger.error(f"Error during data assessment: {e}")
-        print(f"Error assessing data: {e}")
-        return None
-
-
-def query(data: Union[pd.DataFrame, Any]) -> str:
-    """Request user input for some aspect of the data."""
-    raise NotImplementedError
-
-
-def view(data: Union[pd.DataFrame, Any]) -> None:
-    """Provide a view of the data that allows the user to verify some aspect of its quality."""
-    raise NotImplementedError
-
-
-def labelled(data: Union[pd.DataFrame, Any]) -> Union[pd.DataFrame, Any]:
-    """Provide a labelled set of data ready for supervised learning."""
-    raise NotImplementedError
+def visualize_feature_space(X, y, method: str = 'PCA'):
+    if method.upper() != 'PCA':
+        raise ValueError("Only PCA is implemented in this minimal version.")
+    from sklearn.decomposition import PCA
+    import numpy as np
+    pca = PCA(n_components=2)
+    X_proj = pca.fit_transform(X)
+    labels = list(sorted(set(y)))
+    colors = ["green", "blue", "orange", "purple"]
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(8, 6))
+    for idx, label in enumerate(labels):
+        mask = (y == label) if not isinstance(y, list) else np.array(y) == label
+        plt.scatter(X_proj[mask, 0], X_proj[mask, 1], label=label, color=colors[idx % len(colors)], s=100, alpha=0.7)
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.title("2D projection of feature vectors")
+    plt.legend()
+    plt.show()
